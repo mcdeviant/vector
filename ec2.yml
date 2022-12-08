@@ -1,0 +1,54 @@
+---
+- hosts: localhost
+  name: Create instance and add to host group
+  gather_facts: false
+
+  tasks:
+
+    - name: provision ec2 with public IP
+      amazon.aws.ec2_instance:
+        name: test
+        key_name: "vec"
+        vpc_subnet_id: subnet-f12985a9
+        instance_type: t2.micro
+        security_group: "{{ security_group }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        network:
+          assign_public_ip: true
+        image_id: ami-0ecc74eca1d66d8a6
+        tags:
+          Environment: Testing
+      register: result
+
+    - name: Add instance public IPs to host group
+      ansible.builtin.add_host: hostname={{ item.public_ip_address }} groups=ec2hosts
+      loop: "{{ result.instances }}"
+
+- hosts: ec2hosts
+  name: Configuration play
+  user: ubuntu
+  gather_facts: true
+
+  tasks:
+
+    - name: Copy api.py
+      ansible.builtin.copy:
+        src: ./api.py
+        dest: /home/ubuntu/api.py
+        mode: 0755
+        
+    - name: Install tmdbv3.api
+      ansible.builtin.pip:
+        name: tmdbv3api==1.7.7
+
+    - name: Run api.py
+      ansible.builtin.shell: nohup python3 api.py </dev/null >/dev/null 2>&1 &
+      environment:
+        TMDB_API_KEY: "{{ tmdb_api_key }}"
+      register: my_output
+      changed_when: my_output.rc != 0
+      args:
+        executable: python3
+
