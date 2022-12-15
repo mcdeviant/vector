@@ -29,8 +29,8 @@
               - 22
             cidr_ip: "{{ public_ip }}"
           - proto: tcp
-              - 8080
-              - 22
+            from_port: 22
+            to_port: 22
             group_id: sg-082189ec5f5ffa849
         rules_egress:
           - proto: all
