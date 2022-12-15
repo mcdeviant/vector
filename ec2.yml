@@ -1,4 +1,5 @@
 ---
+# ansible-playbook ec2.yml
 - hosts: localhost
   name: Create instance and add to host group
   gather_facts: false
@@ -6,12 +7,12 @@
     - vpc_id: vpc-aff1abcb
     - subnet_id: subnet-f12985a9
     - instance_type: t3.micro
-    - aws_region: us-west-2 #oregon
-    - image_id: ami-0ecc74eca1d66d8a6 #ubuntu
+    - aws_region: us-west-2 # oregon
+    - image_id: ami-0ecc74eca1d66d8a6 # ubuntu
     - key_name: vec
     - public_ip: 34.209.65.108/32
-  vars_files: #key info
-    - playbooks/vars.yml
+  vars_files: # key info
+    - /etc/ansible/playbooks/vars.yml
   tasks:
     - name: Create security group
       amazon.aws.ec2_security_group:
@@ -27,8 +28,63 @@
               - 8080
               - 22
             cidr_ip: "{{ public_ip }}"
+          - proto: tcp
+              - 8080
+              - 22
+            group_id: sg-082189ec5f5ffa849
         rules_egress:
           - proto: all
             cidr_ip: 0.0.0.0/0
       register: security_group
-    
+    - name: Provision ec2 with public IP
+      amazon.aws.ec2_instance:
+        name: vector
+        key_name: "{{ key_name }}"
+        vpc_subnet_id: "{{ subnet_id }}"
+        instance_type: "{{ instance_type }}"
+        security_group: "{{ security_group.group_id }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        network:
+          assign_public_ip: true
+        image_id: "{{ image_id }}"
+        tags:
+          Environment: Testing
+      register: result
+    - name: Add instance public IPs to host group
+      ansible.builtin.add_host:
+        hostname: "{{ item.public_ip_address }}"
+        groups: ec2hosts
+      loop: "{{ result.instances }}"
+- hosts: ec2hosts
+  name: Configure the ec2 hosts
+  user: ubuntu
+  gather_facts: true
+  vars_files: # to get tmdb api key
+    - /etc/ansible/playbooks/vars.yml
+  tasks:
+
+    - name: Copy api.py
+      ansible.builtin.copy:
+        src: src
+        dest: /home/ubuntu/
+        mode: 0755
+
+    - name: Install tmdbv3 from pip
+      ansible.builtin.pip:
+        requirements: /home/ubuntu/src/requirements.txt
+
+    - name: Run api.py
+      ansible.builtin.shell: nohup python3 src/api.py </dev/null >/dev/null 2>&1 &
+      environment:
+        TMDB_API_KEY: "{{ tmdb_api_key }}"
+      register: my_output
+      changed_when: my_output.rc != 0
+
+    - name: Check the movies page is working
+      ansible.builtin.uri:
+        url: http://localhost:8080/movies/popular
+        return_content: true
+      register: this
+      failed_when: "'Black' not in this.content"
